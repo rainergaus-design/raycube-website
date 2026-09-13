@@ -1,0 +1,5 @@
+User-agent: *
+Allow: /
+Disallow: /data/
+Disallow: /anfrage.php
+Sitemap: https://raycube.de/sitemap.xml
