@@ -81,6 +81,90 @@ foreach ([$firma, $name, $email] as $wert) {
     if (preg_match('/[\r\n]/', $wert)) raus(false, 'ungueltig', 422);
 }
 
+// ================== MAILVERSAND (SMTP) ==================
+// PHP mail() ist auf dem GoDaddy-Windows-Hosting nicht an einen Mailserver
+// angebunden (liefert false). Daher direkter SMTP-Versand.
+// Konfiguration optional in data/smtp.ini (liegt ausserhalb des Repos, per
+// IIS gesperrt):
+//   host = smtp.example.com
+//   port = 587
+//   user = noreply@thermprotec.com
+//   pass = geheim
+//   from = noreply@thermprotec.com
+// Ohne smtp.ini: GoDaddy-Hosting-Relay ohne Anmeldung.
+function smtp_konfig(): array {
+    $k = ['host' => 'relay-hosting.secureserver.net', 'port' => 25, 'user' => '', 'pass' => '', 'from' => ABSENDER];
+    $ini = DATENORDNER . '/smtp.ini';
+    if (is_readable($ini)) {
+        $p = parse_ini_file($ini) ?: [];
+        foreach ($k as $key => $v) if (isset($p[$key]) && $p[$key] !== '') $k[$key] = $p[$key];
+        $k['port'] = (int)$k['port'];
+    }
+    return $k;
+}
+
+function smtp_senden(string $an, string $betreff, string $body, string $replyTo, string $replyName): bool {
+    $c = smtp_konfig();
+    $host = $c['host']; $port = $c['port'];
+    $ctx = stream_context_create(['ssl' => ['verify_peer' => true, 'verify_peer_name' => true, 'SNI_enabled' => true]]);
+    $pre = $port === 465 ? 'ssl://' : '';
+    $fp = @stream_socket_client($pre . $host . ':' . $port, $errno, $errstr, 20, STREAM_CLIENT_CONNECT, $ctx);
+    if (!$fp) { error_log("SMTP connect $host:$port: $errstr"); return false; }
+    stream_set_timeout($fp, 20);
+
+    $lies = function () use ($fp): array {
+        $code = 0; $text = '';
+        while (($line = fgets($fp, 1024)) !== false) {
+            $text .= $line;
+            if (preg_match('/^(\d{3})([ -])/', $line, $m)) { $code = (int)$m[1]; if ($m[2] === ' ') break; }
+            else break;
+        }
+        return [$code, $text];
+    };
+    $sag = function (string $cmd, array $ok) use ($fp, $lies): bool {
+        fwrite($fp, $cmd . "\r\n");
+        [$code, $text] = $lies();
+        if (!in_array($code, $ok, true)) { error_log("SMTP '$cmd' -> $text"); return false; }
+        return true;
+    };
+
+    [$code] = $lies();
+    if ($code !== 220) { fclose($fp); return false; }
+    $me = 'raycube.de';
+    if (!$sag("EHLO $me", [250])) { fclose($fp); return false; }
+
+    if ($port === 587 || ($c['user'] !== '' && $port !== 465)) {
+        if ($sag('STARTTLS', [220])) {
+            if (!stream_socket_enable_crypto($fp, true, STREAM_CRYPTO_METHOD_TLS_CLIENT)) { fclose($fp); return false; }
+            if (!$sag("EHLO $me", [250])) { fclose($fp); return false; }
+        }
+    }
+    if ($c['user'] !== '') {
+        if (!$sag('AUTH LOGIN', [334]) || !$sag(base64_encode($c['user']), [334]) || !$sag(base64_encode($c['pass']), [235])) { fclose($fp); return false; }
+    }
+    $from = $c['from'];
+    if (!$sag("MAIL FROM:<$from>", [250]) || !$sag("RCPT TO:<$an>", [250, 251])) { fclose($fp); return false; }
+    if (!$sag('DATA', [354])) { fclose($fp); return false; }
+
+    $kopf  = 'From: ' . ABSENDERNAME . " <$from>\r\n";
+    $kopf .= "To: <$an>\r\n";
+    $kopf .= "Reply-To: " . ($replyName !== '' ? "$replyName <$replyTo>" : "<$replyTo>") . "\r\n";
+    $kopf .= 'Subject: =?UTF-8?B?' . base64_encode($betreff) . "?=\r\n";
+    $kopf .= 'Date: ' . date('r') . "\r\n";
+    $kopf .= 'Message-ID: <' . bin2hex(random_bytes(8)) . "@raycube.de>\r\n";
+    $kopf .= "MIME-Version: 1.0\r\nContent-Type: text/plain; charset=UTF-8\r\nContent-Transfer-Encoding: 8bit\r\n";
+    $kopf .= "X-Mailer: RayCube-Form\r\n";
+    $daten = preg_replace('/\r?\n/', "\r\n", $body);
+    $daten = preg_replace('/^\./m', '..', $daten);
+    fwrite($fp, $kopf . "\r\n" . $daten . "\r\n.\r\n");
+    [$code, $text] = $lies();
+    fwrite($fp, "QUIT\r\n");
+    fclose($fp);
+    if ($code !== 250) { error_log("SMTP DATA -> $text"); return false; }
+    return true;
+}
+// ========================================================
+
 // --- Ordner anlegen ---
 if (!is_dir(DATENORDNER)) {
     @mkdir(DATENORDNER, 0750, true);
@@ -150,13 +234,7 @@ $body .= $klartext !== '' ? $klartext : "Konfiguration: $konfig\n$leistung\nOpti
 $body .= "\n" . str_repeat('=', 56) . "\n";
 $body .= "Erfasst in: data/anfragen.csv\n";
 
-$headers  = 'From: ' . ABSENDERNAME . ' <' . ABSENDER . ">\r\n";
-$headers .= 'Reply-To: ' . $name . ' <' . $email . ">\r\n";
-$headers .= "Content-Type: text/plain; charset=UTF-8\r\n";
-$headers .= "Content-Transfer-Encoding: 8bit\r\n";
-$headers .= "X-Mailer: RayCube-Form\r\n";
-
-$gesendet = @mail(EMPFAENGER, '=?UTF-8?B?' . base64_encode($betreff) . '?=', $body, $headers);
+$gesendet = smtp_senden(EMPFAENGER, $betreff, $body, $email, $name);
 
 // --- Bestaetigung an den Absender ---
 if ($sprache === 'en') {
@@ -182,11 +260,7 @@ if ($sprache === 'en') {
         . "\nMit freundlichen Grüßen\n\nThermProTEC GmbH\nZunftstr. 20 · 77694 Kehl-Marlen\n"
         . "info@thermprotec.com · +49 (7854) 98711 0\nwww.thermprotec.com\n";
 }
-$bHeaders  = 'From: ' . ABSENDERNAME . ' <' . ABSENDER . ">\r\n";
-$bHeaders .= 'Reply-To: ThermProTEC <' . EMPFAENGER . ">\r\n";
-$bHeaders .= "Content-Type: text/plain; charset=UTF-8\r\n";
-$bHeaders .= "Content-Transfer-Encoding: 8bit\r\n";
-@mail($email, '=?UTF-8?B?' . base64_encode($bBetreff) . '?=', $bBody, $bHeaders);
+smtp_senden($email, $bBetreff, $bBody, EMPFAENGER, 'ThermProTEC');
 
 // Auch wenn der Mailversand scheitert: die Anfrage steht in der CSV.
 raus(true, $gesendet ? '' : 'mail_nicht_bestaetigt');
