@@ -240,9 +240,8 @@ $gesendet = smtp_senden(EMPFAENGER, $betreff, $body, $email, $name);
 if ($sprache === 'en') {
     $bBetreff = "Your RayCube enquiry — $vorgang";
     $bBody = "Dear $name,\n\n"
-        . "thank you for your enquiry. We have received your configuration and will come back to you "
-        . "within two working days. The written quotation including prices, terms and lead time follows "
-        . "within five working days.\n\n"
+        . "thank you for your enquiry. We have received your details and your configuration and will "
+        . "get in touch with you as soon as possible.\n\n"
         . "Your reference: $vorgang\n\n"
         . "Your configuration:\n$konfig\n$leistung\n"
         . ($optionen !== '' ? "Options: $optionen\n" : '')
@@ -251,9 +250,8 @@ if ($sprache === 'en') {
 } else {
     $bBetreff = "Ihre RayCube-Anfrage — $vorgang";
     $bBody = "Guten Tag $name,\n\n"
-        . "vielen Dank für Ihre Anfrage. Ihre Konfiguration ist bei uns eingegangen. Wir melden uns "
-        . "innerhalb von zwei Werktagen bei Ihnen; das schriftliche Angebot mit Preisen, Konditionen "
-        . "und Lieferzeit erhalten Sie innerhalb von fünf Werktagen.\n\n"
+        . "vielen Dank für Ihre Anfrage. Ihre Angaben und Ihre Konfiguration sind bei uns eingegangen. "
+        . "Wir setzen uns so bald wie möglich mit Ihnen in Verbindung.\n\n"
         . "Ihre Vorgangsnummer: $vorgang\n\n"
         . "Ihre Konfiguration:\n$konfig\n$leistung\n"
         . ($optionen !== '' ? "Zusatzoptionen: $optionen\n" : '')
